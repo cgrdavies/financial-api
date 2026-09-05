@@ -14,7 +14,7 @@ This service only retrieves financial data from already-connected Plaid items.
 
 Inject these as runtime environment variables (Dokploy's Environment tab).
 The service does **not** implicitly read `.env` files. Never commit credentials,
-exported item JSON, SQLite databases, or financial fixtures to this public repo.
+exported item JSON/base64, SQLite databases, or financial fixtures to this public repo.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -22,7 +22,8 @@ exported item JSON, SQLite databases, or financial fixtures to this public repo.
 | `FINANCIAL_PLAID_CLIENT_ID` | Yes | Existing Plaid client ID |
 | `FINANCIAL_PLAID_SECRET` | Yes | Plaid secret matching the selected environment |
 | `FINANCIAL_PLAID_ENVIRONMENT` | No | `sandbox` (default) or `production`; any other value fails startup |
-| `FINANCIAL_PLAID_ITEMS_JSON` | Yes | JSON array of connected items; see below |
+| `FINANCIAL_PLAID_ITEMS_B64` | Recommended | Standard base64 of the UTF-8 JSON array; one line, Dokploy-safe |
+| `FINANCIAL_PLAID_ITEMS_JSON` | Fallback | Raw JSON array, used only when B64 is empty/unset |
 | `FINANCIAL_ENCRYPTION_KEY` | For encrypted tokens | Existing Spendy Fernet encryption key |
 
 Every setting also accepts its `SPENDY_` equivalent, for example
@@ -31,7 +32,14 @@ Spendy's `development`→sandbox alias is intentionally not accepted: select the
 actual environment explicitly. A weak old `SPENDY_API_TOKEN` must be replaced.
 Invalid or empty connection configuration fails startup rather than appearing healthy.
 
-`FINANCIAL_PLAID_ITEMS_JSON` accepts either form, with unique, real Plaid item IDs:
+Supply at least one connection variable. Nonempty `FINANCIAL_PLAID_ITEMS_B64`
+takes priority over JSON; invalid base64 fails startup without falling back.
+Use standard padded base64, without internal line breaks or shell quotes.
+Surrounding whitespace is trimmed. Base64 is transport encoding, **not encryption**;
+keep the value secret and retain the existing Fernet key for encrypted tokens.
+
+The decoded JSON (or raw `FINANCIAL_PLAID_ITEMS_JSON`) uses this schema, with
+unique, real Plaid item IDs:
 
 ```json
 [
@@ -64,14 +72,17 @@ On a trusted machine/container with access to the existing database:
 ```bash
 python scripts/export_spendy_items.py \
   --db /path/to/spendy.sqlite \
-  --out /secure/path/plaid-items.json
+  --out /secure/path/plaid-items.b64 --format base64
 ```
 
 The helper uses SQLite read-only mode, exports **only encrypted connections**,
 creates a new owner-only (`0600`) file, refuses overwrite, and does not print
-secrets. Copy the file contents into Dokploy's `FINANCIAL_PLAID_ITEMS_JSON` value
+secrets. Copy the file's single base64 line into Dokploy's `FINANCIAL_PLAID_ITEMS_B64` value
 and copy the existing `SPENDY_ENCRYPTION_KEY` (or rename it to
 `FINANCIAL_ENCRYPTION_KEY`). Delete the temporary export after secure transfer.
+The default export format remains JSON for compatibility (`--format json`).
+Unset `FINANCIAL_PLAID_ITEMS_JSON` when using base64 to avoid stale configuration.
+
 Use a proper SQLite backup if moving the DB; do not copy a live WAL database's
 main file without its committed WAL contents. Include errored items too so
 reauthentication needs remain visible, rather than silently dropping banks.
@@ -213,8 +224,8 @@ curl --fail-with-body "$FINANCIAL_API_URL/transactions/sync" \
 1. Create an Application from this repo and select the branch containing this
    code. Choose **Dockerfile** build type; context `/`, Dockerfile `Dockerfile`.
 2. Set the runtime environment above. No build-time secrets, DB, volume, or
-   service dependencies are needed. Do not paste JSON with shell quote wrappers
-   into Dokploy; the environment value should be the actual JSON array.
+   service dependencies are needed. Paste the single-line base64 export into
+   `FINANCIAL_PLAID_ITEMS_B64` without quote wrappers; do not paste raw JSON there.
 3. Configure a domain with HTTPS routing to **container port 8000**. Keep the
    container port private; expose only through the TLS reverse proxy.
 4. Deploy and verify `/health`, then authenticated `/items`, `/accounts`, and an

@@ -13,3 +13,4 @@ build/
 *.db
 *items*.json
 *.key
+*.b64

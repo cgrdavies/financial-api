@@ -1,3 +1,4 @@
+import base64
 import importlib.util
 import json
 import os
@@ -100,7 +101,8 @@ def test_invalid_config_fails_closed(env, key, value):
             pass
 
 
-def test_export_is_encrypted_only_read_only_and_rejects_overwrite(tmp_path):
+@pytest.mark.parametrize("output_format", ["json", "base64"])
+def test_export_is_encrypted_only_read_only_and_rejects_overwrite(tmp_path, env, output_format):
     script = Path(__file__).parents[1] / "scripts" / "export_spendy_items.py"
     spec = importlib.util.spec_from_file_location("exporter", script)
     module = importlib.util.module_from_spec(spec)
@@ -119,17 +121,61 @@ def test_export_is_encrypted_only_read_only_and_rejects_overwrite(tmp_path):
         )
     original = db.read_bytes()
     out = tmp_path / "export.json"
-    assert module.export(db, out) == 1
+    assert module.export(db, out, output_format) == 1
     assert out.stat().st_mode & 0o777 == 0o600
     assert "access-example" not in out.read_text()
     assert "do-not-export-cursor" not in out.read_text()
-    assert json.loads(out.read_text())[0]["access_token_encrypted"] == token
+    payload = out.read_text()
+    if output_format == "base64":
+        assert len(payload.splitlines()) == 1
+        env.setenv("FINANCIAL_PLAID_ITEMS_B64", payload.strip())
+        env.setenv("FINANCIAL_ENCRYPTION_KEY", key.decode())
+        assert Settings.from_env().items[0].access_token == "access-example"
+        payload = base64.b64decode(payload.strip(), validate=True).decode()
+    assert json.loads(payload)[0]["access_token_encrypted"] == token
     assert db.read_bytes() == original
     with pytest.raises(FileExistsError):
-        module.export(db, out)
+        module.export(db, out, output_format)
 
 
 def test_config_ignores_cwd_dotenv(env, tmp_path):
     (tmp_path / ".env").write_text("FINANCIAL_PLAID_SECRET=must-not-load\n")
     env.chdir(tmp_path)
     assert Settings.from_env().plaid_secret == "secret-example"
+
+
+@pytest.mark.parametrize("variable", ["FINANCIAL_PLAID_ITEMS_B64", "SPENDY_PLAID_ITEMS_B64"])
+def test_base64_configuration_overrides_json(env, variable):
+    payload = json.dumps(
+        [
+            {
+                "item_id": "base64-item",
+                "access_token": "base64-access",
+                "institution_name": "Example ü Bank",
+            }
+        ]
+    ).encode()
+    env.setenv(variable, base64.b64encode(payload).decode())
+    s = Settings.from_env()
+    assert s.items[0].item_id == "base64-item"
+    assert s.items[0].access_token == "base64-access"
+    assert s.items[0].institution_name == "Example ü Bank"
+
+
+@pytest.mark.parametrize(
+    "encoded", ["%%%secret-do-not-echo", " ", "W10", "////", "bm90LWpzb24=", "e30=", "W10="]
+)
+def test_invalid_base64_fails_closed_despite_valid_json(env, encoded):
+    env.setenv("FINANCIAL_PLAID_ITEMS_B64", encoded)
+    with pytest.raises(ValueError) as exc:
+        Settings.from_env()
+    assert "secret-do-not-echo" not in str(exc.value)
+    with pytest.raises(RuntimeError, match="Invalid financial-api configuration"):
+        with TestClient(create_app()):
+            pass
+
+
+def test_empty_base64_falls_back_to_json_and_financial_alias_wins(env):
+    env.setenv("SPENDY_PLAID_ITEMS_B64", "invalid-spendy-value")
+    env.setenv("FINANCIAL_PLAID_ITEMS_B64", "")
+    assert Settings.from_env().items[0].access_token == "access-example"

@@ -1,5 +1,6 @@
 """Environment-only configuration. Never print configuration values or validation input."""
 
+import base64
 import json
 import os
 from dataclasses import dataclass, field
@@ -46,7 +47,14 @@ class Settings:
             raise ValueError("Plaid environment must be sandbox or production")
 
         try:
-            raw = json.loads(setting("PLAID_ITEMS_JSON", "[]"))
+            encoded = setting("PLAID_ITEMS_B64")
+            # Nonempty base64 takes priority; invalid base64 must never fall back silently.
+            payload = (
+                base64.b64decode(encoded.strip(), validate=True).decode("utf-8")
+                if encoded
+                else setting("PLAID_ITEMS_JSON", "[]")
+            )
+            raw = json.loads(payload)
             if not isinstance(raw, list) or not 1 <= len(raw) <= 100:
                 raise ValueError
             items = []
@@ -81,7 +89,8 @@ class Settings:
                 raise ValueError
         except (ValueError, TypeError, AttributeError, InvalidToken, UnicodeError):
             raise ValueError(
-                "Invalid FINANCIAL_PLAID_ITEMS_JSON or encryption key: supply 1–100 unique items, "
+                "Invalid FINANCIAL_PLAID_ITEMS_B64 / FINANCIAL_PLAID_ITEMS_JSON or encryption key: "
+                "supply 1–100 unique items, "
                 "each with item_id and exactly one access_token or access_token_encrypted"
             ) from None
         return cls(api_token, client_id, secret, environment, tuple(items))
