@@ -1,0 +1,35 @@
+services:
+  financial-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 40s
+    environment:
+      FINANCIAL_API_TOKEN: ${FINANCIAL_API_TOKEN:?Set FINANCIAL_API_TOKEN}
+      FINANCIAL_PLAID_CLIENT_ID: ${FINANCIAL_PLAID_CLIENT_ID:?Set FINANCIAL_PLAID_CLIENT_ID}
+      FINANCIAL_PLAID_SECRET: ${FINANCIAL_PLAID_SECRET:?Set FINANCIAL_PLAID_SECRET}
+      FINANCIAL_PLAID_ENVIRONMENT: ${FINANCIAL_PLAID_ENVIRONMENT:-sandbox}
+      FINANCIAL_PLAID_ITEMS_B64: ${FINANCIAL_PLAID_ITEMS_B64:?Set FINANCIAL_PLAID_ITEMS_B64}
+      FINANCIAL_ENCRYPTION_KEY: ${FINANCIAL_ENCRYPTION_KEY:-}
+    # Dokploy routes HTTPS to this internal port; do not publish a host port.
+    expose:
+      - "8000"
+    networks:
+      - dokploy-network
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Non-root user, command and /health check are inherited from Dockerfile.
+    # No database, volume, or build-time secrets.
+
+networks:
+  dokploy-network:
+    external: true

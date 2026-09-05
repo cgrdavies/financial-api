@@ -219,15 +219,24 @@ curl --fail-with-body "$FINANCIAL_API_URL/transactions/sync" \
   --data '{"item_id":"example-item-id","count":500}'
 ```
 
-## Dokploy
+## Dokploy (Docker Compose)
 
-1. Create an Application from this repo and select the branch containing this
-   code. Choose **Dockerfile** build type; context `/`, Dockerfile `Dockerfile`.
-2. Set the runtime environment above. No build-time secrets, DB, volume, or
-   service dependencies are needed. Paste the single-line base64 export into
-   `FINANCIAL_PLAID_ITEMS_B64` without quote wrappers; do not paste raw JSON there.
-3. Configure a domain with HTTPS routing to **container port 8000**. Keep the
-   container port private; expose only through the TLS reverse proxy.
+1. Create a **Docker Compose** service from this repo and select the branch
+   containing this code. Set the Compose path to **`compose.yaml`** at the repo
+   root. It builds the existing `Dockerfile` with context `.`.
+2. Set the `FINANCIAL_` environment variables in Dokploy. This Compose file
+   explicitly forwards those names (not the legacy `SPENDY_` aliases or raw JSON).
+   Set `FINANCIAL_API_TOKEN`, `FINANCIAL_PLAID_CLIENT_ID`, `FINANCIAL_PLAID_SECRET`,
+   and `FINANCIAL_PLAID_ITEMS_B64`; Compose refuses to start if any is empty.
+   Set `FINANCIAL_PLAID_ENVIRONMENT=production` for real bank connections; the
+   default is sandbox. For encrypted tokens also set `FINANCIAL_ENCRYPTION_KEY`.
+   No build-time secrets, DB, volume, or service dependencies are needed. Paste
+   the single-line base64 export without quote wrappers; do not paste raw JSON.
+3. Configure a domain with HTTPS routing to service **`financial-api`**, container
+   port **8000**. The service uses **`expose`**, not a host `ports` binding, and
+   joins **`dokploy-network`** declared with **`external: true`**. That network
+   must already exist on the Dokploy host; Compose does not create it. Dokploy's
+   proxy handles public access. Do not publish port 8000 on the host.
 4. Deploy and verify `/health`, then authenticated `/items`, `/accounts`, and an
    initial `/transactions/sync` for **each** configured item. Health alone does
    not verify Plaid credentials. Verify that unauthenticated data requests fail.
